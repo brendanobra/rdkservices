@@ -33,6 +33,7 @@ add_library(${MODULE_NAME} SHARED
         impl/NetworkStatusObserver.cpp
         impl/SatToken.cpp
         )
+        
 set_target_properties(${MODULE_NAME} PROPERTIES
         CXX_STANDARD 11
         CXX_STANDARD_REQUIRED YES)
