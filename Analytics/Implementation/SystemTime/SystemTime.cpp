@@ -40,8 +40,6 @@ namespace WPEFramework
                                                             mTimeQuality(TIME_QUALITY_STALE),
                                                             mTimeZone(),
                                                             mTimeZoneAccuracyString(),
-                                                            mTimeZoneAccuracy(ACC_UNDEFINED),
-                                                            mTimeZoneOffsetSec(0),
                                                             mTransitionMap(),
                                                             mIsSystemTimeAvailable(false),
                                                             mShell(shell)
@@ -74,44 +72,22 @@ namespace WPEFramework
 
         bool SystemTime::IsSystemTimeAvailable()
         {
-            bool isAvailable = false;
-            {
-                std::lock_guard<std::mutex> guard(mLock);
-                isAvailable = mIsSystemTimeAvailable;
-            }
-
-            if (isAvailable == false && mSystemLink != nullptr)
-            {
-                JsonObject params;
-                JsonObject response;
-
-                uint32_t result = mSystemLink->Invoke<JsonObject, JsonObject>(JSONRPC_THUNDER_TIMEOUT, "getTimeStatus", params, response);
-                if (result == Core::ERROR_NONE && response.HasLabel("TimeQuality"))
-                {
-                    mTimeQuality = response["TimeQuality"].String();
-                    if (mTimeQuality == TIME_QUALITY_GOOD || mTimeQuality == TIME_QUALITY_SECURE)
-                    {
-                        std::lock_guard<std::mutex> guard(mLock);
-                        mIsSystemTimeAvailable = true;
-                        isAvailable = true;
-                    }
-                }
-            }
-
-            LOGINFO("IsSystemTimeAvailable: %d", isAvailable);
-            return isAvailable;
+            // Time status is updated during init and on event
+            std::lock_guard<std::mutex> guard(mLock);
+            return mIsSystemTimeAvailable;
         }
 
         SystemTime::TimeZoneAccuracy SystemTime::GetTimeZoneOffset(int32_t &offsetSec)
         {
-            SystemTime::TimeZoneAccuracy accuracy = ACC_UNDEFINED;
-            {
-                std::lock_guard<std::mutex> guard(mLock);
-                offsetSec = mTimeZoneOffsetSec;
-                accuracy = mTimeZoneAccuracy;
-            }
+            std::lock_guard<std::mutex> guard(mLock);
 
-            return accuracy;
+            if (mIsSystemTimeAvailable)
+            {
+                std::pair<SystemTime::TimeZoneAccuracy, int32_t> tzParsed = ParseTimeZone(mTimeZone, mTimeZoneAccuracyString);
+                offsetSec = tzParsed.second;
+                return tzParsed.first;
+            }
+            return ACC_UNDEFINED;
         }
 
         void SystemTime::onTimeStatusChanged(const JsonObject& parameters)
@@ -215,6 +191,12 @@ namespace WPEFramework
                     mIsSystemTimeAvailable = false;
                 }
             }
+            else
+            {
+                LOGERR("getTimeStatus not available, assuming time is OK");
+                std::lock_guard<std::mutex> guard(mLock);
+                mIsSystemTimeAvailable = true;
+            }
         }
 
         void SystemTime::UpdateTimeZone()
@@ -231,11 +213,8 @@ namespace WPEFramework
                 std::lock_guard<std::mutex> guard(mLock);
                 if (mTimeZone != tz || mTimeZoneAccuracyString != accuracy)
                 {
-                    std::pair<SystemTime::TimeZoneAccuracy, int32_t> tzParsed = ParseTimeZone(tz, accuracy);
                     mTimeZone = tz;
                     mTimeZoneAccuracyString = accuracy;
-                    mTimeZoneAccuracy = tzParsed.first;
-                    mTimeZoneOffsetSec = tzParsed.second;
                 }
             }
         }
@@ -264,7 +243,6 @@ namespace WPEFramework
             if (timeZone == "Universal")
             {
                 result.second = 0;
-                LOGINFO("timeZoneOff: %d", result.second);
                 return result;
             }
 
@@ -282,13 +260,11 @@ namespace WPEFramework
             if (currentTimeEndItr != mTransitionMap.end())
             {
                 result.second = currentTimeEndItr->second;
-                LOGINFO("timeZoneOff: %d", result.second);
             }
             else if (mTransitionMap.empty() == false)
             {
                 currentTimeEndItr--; // take the last transition when all transitions are from past
                 result.second = currentTimeEndItr->second;
-                LOGINFO("timeZoneOff: %d", result.second);
             }
             else
             {
@@ -398,10 +374,6 @@ namespace WPEFramework
                     LOGERR("v_secure_popen of zdump -v %s failed", mTimeZone.c_str());
                 }
             }
-            else
-            {
-                LOGINFO("No update required");
-            }
         }
 
 
@@ -467,11 +439,8 @@ namespace WPEFramework
                         std::lock_guard<std::mutex> guard(mLock);
                         if (mTimeZone != tz || mTimeZoneAccuracyString != accuracy)
                         {
-                            std::pair<SystemTime::TimeZoneAccuracy, int32_t> tzParsed = ParseTimeZone(tz, accuracy);
                             mTimeZone = tz;
                             mTimeZoneAccuracyString = accuracy;
-                            mTimeZoneAccuracy = tzParsed.first;
-                            mTimeZoneOffsetSec = tzParsed.second;
                         }
                     }
                 }
